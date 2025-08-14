@@ -6,6 +6,7 @@ local Types = require("cmake-tools.types")
 local variants = require("cmake-tools.variants")
 local Presets = require("cmake-tools.presets")
 local kits = require("cmake-tools.kits")
+local osys = require("cmake-tools.osys")
 
 local Config = {
     build_directory = nil,
@@ -83,6 +84,9 @@ function Config:update_build_dir(build_dir, no_expand_build_dir)
         error(
             "no_expand_build_dir needs to be a string or function returning string path to the build_directory"
         )
+    end
+    if osys.iswin32 then
+        build_dir = build_dir:gsub("/", "\\")
     end
     local build_path = Path:new(build_dir)
     if build_path:is_absolute() then
