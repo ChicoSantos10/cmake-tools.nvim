@@ -908,6 +908,78 @@ function cmake.select_build_preset(callback)
     end
 end
 
+function cmake.select_test_preset(callback)
+    callback = type(callback) == "function" and callback
+        or function(result)
+            if result:is_ok() then
+                cmake.generate({ bang = false, fargs = {} }, nil)
+            end
+        end
+    if check_active_job_and_notify(callback) then
+        return
+    end
+
+    if get_cmake_configuration_or_notify(callback) == nil then
+        return
+    end
+
+    -- if exists presets
+    if Presets.exists(config.cwd) then
+        local presets = Presets:parse(config.cwd)
+        local test_preset_names =
+            presets:get_test_preset_names({ include_disabled = config:show_disabled_build_presets() })
+        test_preset_names = vim.list_extend(test_preset_names, { "None" })
+        local format_preset_name = function(p_name)
+            if p_name == "None" then
+                return p_name
+            end
+            local p = presets:get_test_preset(p_name)
+            return p.displayName or p.name
+        end
+        vim.ui.select(
+            test_preset_names,
+            { prompt = "Select cmake test presets", format_item = format_preset_name },
+            vim.schedule_wrap(function(choice)
+                if not choice or choice == "None" then
+                    if choice == "None" then
+                        config.test_preset = nil
+                    end
+                    callback(Result:new_error(Types.NOT_SELECT_PRESET, "No test preset selected"))
+                    return
+                end
+                if config.test_preset ~= choice then
+                    config.test_preset = choice
+
+                    local test_preset = presets:get_test_preset(choice)
+                    if test_preset then
+                        config:update_test_target()
+                    end
+                end
+                local associated_configure_preset = presets:get_configure_preset(
+                    presets:get_test_preset(choice).configurePreset,
+                    { include_hidden = true }
+                )
+                local associated_configure_preset_name = associated_configure_preset
+                    and associated_configure_preset.name
+                    or nil
+                local configure_preset_updated = false
+
+                if config.configure_preset ~= associated_configure_preset_name then
+                    config.configure_preset = associated_configure_preset_name
+                    configure_preset_updated = true
+                end
+
+                callback(Result:new(Types.SUCCESS, nil, nil))
+            end)
+        )
+    else
+        callback(
+            Result:new_error(Types.CANNOT_FIND_PRESETS_FILE, "Cannot find CMake[User]Presets file")
+        )
+        log.error("Cannot find CMake[User]Presets.json at Root (" .. config.cwd .. ")!!")
+    end
+end
+
 function cmake.select_build_target(regenerate, callback)
     callback = type(callback) == "function" and callback or function(_) end
     if not (config:has_build_directory()) then
@@ -1175,6 +1247,31 @@ function cmake.run_test(opt, callback)
         end)
     end
 
+    local preset_in_args = false
+    for _, arg in ipairs(opt.fargs) do
+        if arg:match("preset") then
+            preset_in_args = true
+            break
+        end
+    end
+
+    local use_presets = not preset_in_args and config.base_settings.use_preset and Presets.exists(config.cwd)
+    if use_presets then
+        if not config.test_preset then
+            return cmake.select_test_preset(function(result)
+                if not result:is_ok() then
+                    callback(result)
+                    return
+                end
+            end)
+        end
+    end
+
+    local args = {}
+    if use_presets and config.test_preset then
+        args = { "--preset", config.test_preset }
+    end
+
     local env = environment.get_build_environment(config)
     ctest.list_all_tests(config:build_directory_path(), function(all_tests)
         if #all_tests == 0 then
@@ -1185,18 +1282,18 @@ function cmake.run_test(opt, callback)
             if not idx then
                 return
             end
-            if idx == 1 then
-                ctest.run(const.ctest_command, "", config:build_directory_path(), env, config, opt)
-            else
-                ctest.run(
-                    const.ctest_command,
-                    all_tests[idx],
-                    config:build_directory_path(),
-                    env,
-                    config,
-                    opt
-                )
+            if idx > 1 then
+                table.insert(args, "-R")
+                table.insert(args, all_tests[idx])
             end
+            ctest.run(
+                const.ctest_command,
+                args,
+                config:build_directory_path(),
+                env,
+                config,
+                opt
+            )
         end)
     end)
 end
@@ -1269,6 +1366,10 @@ end
 
 function cmake.get_build_target()
     return config.build_target
+end
+
+function cmake.get_test_target()
+    return config.test_target
 end
 
 function cmake.get_build_target_path()
@@ -1347,6 +1448,10 @@ end
 
 function cmake.get_build_targets()
     return config:build_targets()
+end
+
+function cmake.get_test_targets()
+    return config:test_targets()
 end
 
 function cmake.get_launch_targets()

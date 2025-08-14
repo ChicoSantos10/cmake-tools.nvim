@@ -1,0 +1,34 @@
+local Path = require("plenary.path")
+local osys = require("cmake-tools.osys")
+
+local TestPreset = {}
+
+function TestPreset:new(cwd, obj)
+    local instance = setmetatable(obj or {}, { __index = self })
+    instance.__index = self
+    instance.environment = instance.environment or {}
+    instance.cwd = cwd
+
+    return instance
+end
+
+function TestPreset:get_test_target()
+    if self.targets == nil then
+        return nil
+    end
+    if type(self.targets) == "string" then
+        return { self.targets }
+    elseif type(self.targets) == "table" then
+        return self.targets
+    end
+    return nil
+end
+
+function TestPreset:get_test_type()
+    if self.configuration == nil then
+        return nil
+    end
+    return self.configuration
+end
+
+return TestPreset
